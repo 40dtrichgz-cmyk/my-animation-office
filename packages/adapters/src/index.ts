@@ -1,3 +1,6 @@
 export * from './OllamaAdapter';
 export * from './OpenAICompatibleAdapter';
 export * from './PromptBuilder';
+export * from './cli/types';
+export * from './cli/spawn';
+export * from './cli/drivers/claude';
