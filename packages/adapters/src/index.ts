@@ -6,3 +6,4 @@ export * from './cli/spawn';
 export * from './cli/drivers/claude';
 export * from './cli/drivers/opencode';
 export * from './cli/drivers/gemini';
+export * from './cli/CliBrainAdapter';
