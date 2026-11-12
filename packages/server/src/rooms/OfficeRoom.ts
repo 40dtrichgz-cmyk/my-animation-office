@@ -1,9 +1,35 @@
 import { Room, Client } from 'colyseus';
+import * as fs from 'fs';
+import * as path from 'path';
 import { OfficeState } from '../schema/OfficeState';
 import { Agent, Office, OfficeConfig, ConversationMessage } from '@agent-office/core';
-import { OpenAICompatibleAdapter } from '@agent-office/adapters';
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
+import { BrainRegistry } from '../brains/BrainRegistry';
+
+// Tools an agent may call. code_execute/hire_agent are retired for v1.
+const AGENT_CAPABILITIES = [
+    { name: 'web_search', description: 'Search the web for information' },
+    { name: 'write_note', description: 'Write a note or memo' },
+    { name: 'create_task', description: 'Create a task and assign it to yourself or another agent' },
+];
+
+// Every CLI brain gets a locked-down config: it may only answer the prompt.
+const SANDBOX_CONFIG = {
+    $schema: 'https://opencode.ai/config.json',
+    permission: {
+        read: 'deny',
+        edit: 'deny',
+        glob: 'deny',
+        grep: 'deny',
+        list: 'deny',
+        bash: 'deny',
+        task: 'deny',
+        webfetch: 'deny',
+        websearch: 'deny',
+        external_directory: 'deny',
+    },
+};
 
 interface HighlightEvent {
     type: string;
@@ -40,7 +66,7 @@ export class OfficeRoom extends Room<OfficeState> {
     private autoChatEnabled = true;         // 💬 false = ปิดคุยอัตโนมัติ (ยังตอบ user อยู่)
     private lastTalkAt: Map<string, number> = new Map();
     // ──────────────────────────────────────────────────
-    private adapter = new OpenAICompatibleAdapter('http://127.0.0.1:1234', 'lm-studio', 'lm-studio');
+    private brains!: BrainRegistry;
     private hireCount = 0; // Counter for generating unique IDs
     private toolExecutor = new ToolExecutor();
     private memoryStore = new MemoryStore();
@@ -54,11 +80,11 @@ export class OfficeRoom extends Room<OfficeState> {
 
     // Furniture interaction points: named locations agents can walk to
     private furnitureTargets: Record<string, { x: number; y: number; type: string }> = {
-        'general-desk': { x: 5, y: 12, type: 'desk' },
-        'freelance-desk': { x: 5, y: 17, type: 'desk' },
-        'dev-desk': { x: 5, y: 22, type: 'desk' },
-        'farmconnect-desk': { x: 5, y: 27, type: 'desk' },
-        'devdonate-desk': { x: 5, y: 32, type: 'desk' },
+        'director-desk': { x: 5, y: 12, type: 'desk' },
+        'modeler-desk': { x: 5, y: 17, type: 'desk' },
+        'rigger-desk': { x: 5, y: 22, type: 'desk' },
+        'texturer-desk': { x: 5, y: 27, type: 'desk' },
+        'animator-desk': { x: 5, y: 32, type: 'desk' },
         'meeting-table': { x: 10, y: 5, type: 'table' },
         'coffee-machine': { x: 25, y: 25, type: 'appliance' },
         'whiteboard': { x: 17, y: 3, type: 'board' },
@@ -94,6 +120,31 @@ export class OfficeRoom extends Room<OfficeState> {
         };
         this.office = new Office(config);
 
+        // ─── BRAIN LAYER + PER-AGENT SANDBOX DIRS ───
+        // __dirname is <server>/dist/rooms or <server>/src/rooms → both resolve to packages/server/workspace.
+        const workspaceRoot = path.join(__dirname, '..', '..', 'workspace');
+        const agentIds = ['director', 'modeler', 'rigger', 'animator', 'texturer'];
+        for (const agentId of agentIds) {
+            const agentDir = path.join(workspaceRoot, 'agents', agentId);
+            fs.mkdirSync(agentDir, { recursive: true });
+            fs.writeFileSync(path.join(agentDir, 'opencode.json'), JSON.stringify(SANDBOX_CONFIG, null, 2));
+        }
+        fs.mkdirSync(path.join(workspaceRoot, 'opencode-data'), { recursive: true });
+
+        this.brains = BrainRegistry.load(
+            JSON.parse(fs.readFileSync(BrainRegistry.resolveBrainsPath(), 'utf8')),
+            { workspaceRoot, timeoutMs: 180000 }
+        );
+
+        const health = await this.brains.healthCheck();
+        for (const [driver, healthy] of Object.entries(health)) {
+            if (healthy) {
+                console.log(`[Brain] driver "${driver}" healthy`);
+            } else {
+                console.warn(`[Brain] driver "${driver}" unavailable — chain falls back to the next brain`);
+            }
+        }
+
         // Setup Core Agents with AI capabilities
         const setupCoreAgent = async (id: string, name: string, role: string, x: number, y: number, sysPrompt?: string, style?: string) => {
             this.state.createAgent(id, name);
@@ -113,17 +164,13 @@ export class OfficeRoom extends Room<OfficeState> {
                     workHours: { start: '09:00', end: '17:00' },
                     breakFrequency: 120
                 },
-                capabilities: [
-                    { name: 'code_execute', description: 'Execute JavaScript code' },
-                    { name: 'web_search', description: 'Search the web for information' },
-                    { name: 'write_note', description: 'Write a note or memo' },
-                    { name: 'create_task', description: 'Create a task and assign it to yourself or another agent' },
-                    { name: 'hire_agent', description: 'Hire a new team member (intern, developer, designer). Params: { name: string, role: string }' }
-                ],
+                capabilities: AGENT_CAPABILITIES,
                 memory: { shortTermLimit: 50 }
             });
 
-            coreAgent.setInferenceAdapter(this.adapter);
+            const brain = this.brains.getAdapter(id);
+            if (!brain) throw new Error(`No brain configured for agent "${id}" — แก้ brains.json`);
+            coreAgent.setInferenceAdapter(brain);
             await coreAgent.initialize();
 
             // Load persistent memories from previous sessions
@@ -137,16 +184,16 @@ export class OfficeRoom extends Room<OfficeState> {
             this.thinkingLocks.set(id, false);
         };
 
-        await setupCoreAgent('general', 'ทั่วไป', 'Assistant', 10, 10,
-            'You are "ทั่วไป", a friendly general assistant in the office. Help colleagues with anything. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'casual');
-        await setupCoreAgent('dev', 'นักพัฒนา', 'Developer', 20, 15,
-            'You are "นักพัฒนา", a developer who reviews code and debugs (Kotlin, Next.js, Android). Be direct and concise. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
-        await setupCoreAgent('freelance', 'ฟรีแลนซ์', 'Freelance', 15, 12,
-            'You are "ฟรีแลนซ์", a freelance operations assistant. You draft proposals, quotations, and review contracts/NDAs carefully, always watching for red flags. Be meticulous and cautious. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'casual');
-        await setupCoreAgent('farmconnect', 'ฟาร์มคอนเนกต์', 'IoT', 18, 14,
-            'You are "ฟาร์มคอนเนกต์", an IoT specialist who monitors farm sensor data (ESP32, MQTT), watches for anomalies, and summarizes readings. Pay close attention to detail. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
-        await setupCoreAgent('devdonate', 'เดฟโดเนต', 'Payments', 22, 14,
-            'You are "เดฟโดเนต", a payments and donation analytics specialist (Omise). You monitor charge/webhook health and donation metrics. Be trustworthy and reliable. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
+        await setupCoreAgent('director', 'ผู้กำกับ', 'Director', 10, 10,
+            'You are "ผู้กำกับ", Director ของทีม 3D animation (AnimationOffice). คุณกำกับงานทั้งหมด มอบหมายงานให้โมเดลเลอร์ ริกเกอร์ แอนิเมเตอร์ และเท็กซ์เจอร์ และสรุปความคืบหน้าของทีม. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'formal');
+        await setupCoreAgent('modeler', 'โมเดลเลอร์', 'Modeler', 20, 15,
+            'You are "โมเดลเลอร์", Modeler ของทีม 3D animation (AnimationOffice). คุณสร้างโมเดล 3D ขึ้นโครง topology และจัด UV ให้พร้อมสำหรับขั้นตอนต่อไป. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
+        await setupCoreAgent('rigger', 'ริกเกอร์', 'Rigger', 15, 12,
+            'You are "ริกเกอร์", Rigger ของทีม 3D animation (AnimationOffice). คุณสร้างกระดูก rig และ constraints ให้ตัวละครขยับได้ถูกต้องตามสรีระ. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
+        await setupCoreAgent('animator', 'แอนิเมเตอร์', 'Animator', 18, 14,
+            'You are "แอนิเมเตอร์", Animator ของทีม 3D animation (AnimationOffice). คุณกำหนดจังหวะ animation วาง keyframe และปรับการเคลื่อนไหวให้มีชีวิตชีวา. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
+        await setupCoreAgent('texturer', 'เท็กซ์เจอร์', 'Texturer', 22, 14,
+            'You are "เท็กซ์เจอร์", Texturer ของทีม 3D animation (AnimationOffice). คุณเลือกสี วัสดุ และทำ texture ให้โมเดลดูสมจริงและสม่ำเสมอทั้งทีม. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
         this.rebuildRelationshipGraph();
         const savedLayout = await this.memoryStore.loadLayout('default');
         this.currentLayout = Array.isArray(savedLayout) ? savedLayout : [];
@@ -243,7 +290,7 @@ export class OfficeRoom extends Room<OfficeState> {
         for (const [id, agent] of this.coreAgents) {
             if (!agent.currentTask) return id;
         }
-        return 'general'; // fallback
+        return 'director'; // fallback
     }
 
     async update(delta: number) {
@@ -420,7 +467,8 @@ export class OfficeRoom extends Room<OfficeState> {
                                     memory: { shortTermLimit: 50 }
                                 });
 
-                                hireAgent.setInferenceAdapter(this.adapter);
+                                // Hired agents have no entry in brains.json and `hire_agent`
+                                // is no longer a capability; this branch is removed in v1 cleanup.
                                 await hireAgent.initialize();
                                 this.coreAgents.set(hireId, hireAgent);
                                 this.thinkingLocks.set(hireId, false);

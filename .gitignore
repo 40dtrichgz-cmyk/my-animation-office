@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Per-agent CLI sandbox / working dirs
+workspace/
+
 # Environment
 .env
 .env.local
