@@ -1,0 +1,7 @@
+{
+    "director":  [{ "driver": "claude", "model": "haiku" }, { "driver": "opencode", "model": "llmapi/claude-sonnet-4-5" }],
+    "modeler":   [{ "driver": "opencode", "model": "llmapi/claude-sonnet-4-5" }, { "driver": "claude", "model": "haiku" }],
+    "rigger":    [{ "driver": "opencode", "model": "llmapi/nemotron-3.5-lightning" }, { "driver": "claude", "model": "haiku" }],
+    "animator":  [{ "driver": "claude", "model": "haiku" }, { "driver": "opencode", "model": "llmapi/nemotron-3.5-lightning" }],
+    "texturer":  [{ "driver": "opencode", "model": "llmapi/gemini-2.5-flash" }, { "driver": "claude", "model": "haiku" }]
+}
