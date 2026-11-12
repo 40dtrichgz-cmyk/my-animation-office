@@ -6,6 +6,9 @@ import { Agent, Office, OfficeConfig, ConversationMessage } from '@agent-office/
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
 import { BrainRegistry } from '../brains/BrainRegistry';
+import { UserLane } from './UserLane';
+
+const THINKING_THOUGHT = '🧠 กำลังคิด...';
 
 // Tools an agent may call. code_execute/hire_agent are retired for v1.
 const AGENT_CAPABILITIES = [
@@ -56,12 +59,16 @@ export class OfficeRoom extends Room<OfficeState> {
     private demoTickCount = 0;
     private coreAgents: Map<string, Agent> = new Map();
     private thinkingLocks: Map<string, boolean> = new Map();
+    private activeThinks: Set<string> = new Set(); // agent ที่กำลัง think อยู่จริง (กัน user lane เรียกซ้ำ)
     private activeThinkers = 0;
-    private maxConcurrentThinks = 1; // gemma 4B: ยิง LM Studio ทีละ request กันคิวล้น
+    private maxConcurrentThinks = 2; // 2 think พร้อมกันพอดีกับ CLI 2 ตัว
+    // คิวข้อความผู้ใช้: แซง auto-think เสมอ (ไม่รอ cooldown, แต่ไม่เรียก agent ที่กำลังคิดซ้ำ)
+    private userLane = new UserLane<{ agentId: string; text: string }>(this.maxConcurrentThinks);
     // ───────── จูนจังหวะ agent (ปรับค่าตรงนี้ได้เลย) ─────────
-    private thinkCooldownMs = 25000;        // เว้นช่วงคิดของแต่ละ agent (ms) ~20-30 วิ
-    private conversationCooldownMs = 60000; // เว้นอย่างน้อยเท่านี้ก่อน agent ทักคุยกันเองรอบใหม่ (ms)
-    private talkChance = 0.35;              // โอกาส agent เริ่มคุยกันเองต่อรอบ (0-1)
+    private thinkTimeoutMs = 180000;         // เวลาสูงสุดต่อ think ของ agent 1 ตัว (ms) = 3 นาที
+    private thinkCooldownMs = 60000;         // เว้นช่วงคิดของแต่ละ agent (ms) = 1 นาที
+    private conversationCooldownMs = 300000; // เว้นอย่างน้อยเท่านี้ก่อน agent ทักคุยกันเองรอบใหม่ (ms) = 5 นาที
+    private talkChance = 0.3;                // โอกาส agent เริ่มคุยกันเองต่อรอบ (0-1)
     private simulationPaused = false;       // ⏸ true = หยุด agent ทั้งหมด
     private autoChatEnabled = true;         // 💬 false = ปิดคุยอัตโนมัติ (ยังตอบ user อยู่)
     private lastTalkAt: Map<string, number> = new Map();
@@ -133,7 +140,7 @@ export class OfficeRoom extends Room<OfficeState> {
 
         this.brains = BrainRegistry.load(
             JSON.parse(fs.readFileSync(BrainRegistry.resolveBrainsPath(), 'utf8')),
-            { workspaceRoot, timeoutMs: 180000 }
+            { workspaceRoot, timeoutMs: this.thinkTimeoutMs }
         );
 
         const health = await this.brains.healthCheck();
@@ -208,14 +215,13 @@ export class OfficeRoom extends Room<OfficeState> {
             const text = String(message?.text || '').trim();
             if (!text) return;
             console.log(`Chat from ${client.sessionId}: ${text}`);
-            this.broadcast('chat', { sender: 'User', text });
-            // ส่งข้อความ user ให้ agent 'ทั่วไป' ตอบ + ปลุกให้คิดทันที
-            const targetId = this.coreAgents.has('general') ? 'general' : this.coreAgents.keys().next().value;
-            const target = targetId ? this.coreAgents.get(targetId) : undefined;
-            if (target && targetId) {
-                target.receiveMessage({ from: 'User', to: target.config.name, content: text, timestamp: this.state.officeTime });
-                this.thinkingLocks.set(targetId, false);
-            }
+            const targetId = message.target && this.coreAgents.has(message.target)
+                ? message.target
+                : (this.coreAgents.keys().next().value as string | undefined); // default = director (คนแรกที่ setup)
+            if (!targetId) return; // ยังไม่มี agent ในห้อง
+            this.broadcast('chat', { sender: 'User', text: `ถึง ${this.state.agents.get(targetId)?.name}: ${text}` });
+            this.userLane.push({ agentId: targetId, text });
+            this.pumpUserLane();
         });
 
         this.onMessage('set-paused', (_client, message) => {
@@ -303,245 +309,16 @@ export class OfficeRoom extends Room<OfficeState> {
         if (this.simulationPaused) return; // ⏸ หยุดทั้ง think และการเดิน
 
         // ─── AGENT THINK CYCLE ───
-        this.coreAgents.forEach((coreAgent, id) => {
-            if (this.activeThinkers >= this.maxConcurrentThinks) return;
-            if (!this.thinkingLocks.get(id)) {
+        // priority lane: ถ้ามีข้อความผู้ใช้รออยู่ ให้หยุดเริ่ม auto-think รอบใหม่ก่อน
+        if (this.userLane.size === 0) {
+            this.coreAgents.forEach((_coreAgent, id) => {
+                if (this.activeThinkers >= this.maxConcurrentThinks) return;
+                if (this.thinkingLocks.get(id)) return;
                 this.thinkingLocks.set(id, true);
                 this.activeThinkers++;
-
-                const agentState = this.state.agents.get(id);
-                if (!agentState) return;
-
-                // Build nearby agents list
-                const nearbyAgents: { name: string; role: string; distance: number }[] = [];
-                this.coreAgents.forEach((other, otherId) => {
-                    if (otherId === id) return;
-                    const otherState = this.state.agents.get(otherId);
-                    if (otherState) {
-                        const dist = Math.abs(agentState.x - otherState.x) + Math.abs(agentState.y - otherState.y);
-                        nearbyAgents.push({ name: other.config.name, role: other.config.role, distance: dist });
-                    }
-                });
-
-                coreAgent.think({
-                    time: this.state.officeTime,
-                    location: `${agentState.x},${agentState.y}`,
-                    nearbyAgents,
-                    currentTask: coreAgent.currentTask || null,
-                    recentMessages: coreAgent.getUnreadMessages(),
-                    memories: coreAgent.getRecentMemories(5)
-                }).then(async (decision) => {
-                    agentState.action = decision.action;
-
-                    if (decision.thought) {
-                        agentState.thought = decision.thought;
-                    }
-
-                    // ── คุมความถี่: ตอบ user ได้เสมอ, แต่คุยกันเองจำกัดด้วย cooldown + probability ──
-                    if (decision.action === 'talk') {
-                        const unreadMsgs = coreAgent.getUnreadMessages();
-                        const fromUser = unreadMsgs.some(m => String(m.from || '').toLowerCase() === 'user');
-                        const okTalk = fromUser || (this.autoChatEnabled
-                            && (Date.now() - (this.lastTalkAt.get(id) || 0) >= this.conversationCooldownMs)
-                            && Math.random() < this.talkChance);
-                        if (okTalk) {
-                            this.lastTalkAt.set(id, Date.now());
-                        } else {
-                            decision.action = 'idle';
-                            agentState.action = 'idle';
-                            coreAgent.clearInbox();
-                        }
-                    }
-
-                    // ─── HANDLE TALK ACTION (Agent-to-Agent) ───
-                    if (decision.action === 'talk' && decision.message) {
-                        const targetName = decision.target || '';
-                        let targetId = '';
-                        this.coreAgents.forEach((a, aId) => {
-                            if (a.config.name.toLowerCase() === targetName.toLowerCase()) targetId = aId;
-                        });
-
-                        const targetAgent = this.coreAgents.get(targetId);
-                        const toLabel = targetAgent ? targetAgent.config.name : (targetName || 'ทุกคน');
-
-                        // Broadcast to UI chat ALWAYS (so user sees replies too)
-                        this.broadcast('chat', {
-                            sender: coreAgent.config.name,
-                            text: `💬 (ถึง ${toLabel}): ${decision.message}`
-                        });
-
-                        if (targetAgent) {
-                            const msg: ConversationMessage = {
-                                from: coreAgent.config.name,
-                                to: targetAgent.config.name,
-                                content: decision.message,
-                                timestamp: this.state.officeTime
-                            };
-                            targetAgent.receiveMessage(msg);
-                            this.emitHighlight(
-                                'conversation',
-                                `${coreAgent.config.name} pinged ${targetAgent.config.name}`,
-                                decision.message.slice(0, 120),
-                                id
-                            );
-                            this.updateRelationship(id, targetId, 0.08);
-
-                            // Save conversation memory
-                            await this.memoryStore.saveMemory(id, {
-                                content: `Said to ${targetAgent.config.name}: "${decision.message}"`,
-                                type: 'conversation',
-                                timestamp: this.state.officeTime,
-                                importance: 0.7
-                            }, this.sessionId);
-                        }
-
-                        coreAgent.clearInbox(); // Clear after processing
-                    }
-
-                    // ─── HANDLE TOOL EXECUTION ───
-                    if (decision.action === 'use_tool' && decision.toolCall) {
-                        // Special case: agent-created tasks
-                        if (decision.toolCall.name === 'create_task') {
-                            const { title, assignee } = decision.toolCall.params;
-                            const targetId = assignee?.toLowerCase() || this.autoAssignAgent();
-                            const targetAgent = this.coreAgents.get(targetId);
-                            const targetState = this.state.agents.get(targetId);
-
-                            if (targetAgent && targetState) {
-                                targetAgent.currentTask = title;
-                                targetState.currentTask = title;
-                                await this.memoryStore.createTask(title, targetId);
-
-                                this.broadcast('chat', {
-                                    sender: coreAgent.config.name,
-                                    text: `📋 สร้างงาน "${title}" ให้ ${targetAgent.config.name}`
-                                });
-                                this.broadcast('task-update', {
-                                    agentId: targetId,
-                                    agentName: targetAgent.config.name,
-                                    task: title,
-                                    status: 'in_progress'
-                                });
-                                this.emitHighlight(
-                                    'task',
-                                    `${coreAgent.config.name} assigned work`,
-                                    `"${title}" is now owned by ${targetAgent.config.name}.`,
-                                    targetId
-                                );
-                            }
-                        } else if (decision.toolCall.name === 'hire_agent') {
-                            // ─── DYNAMIC AGENT HIRING ───
-                            const hireParams = decision.toolCall.params;
-                            const hireName = hireParams.name || ['Charlie', 'Diana', 'Eve', 'Frank', 'Grace'][this.hireCount % 5];
-                            const hireRole = hireParams.role || 'Intern';
-                            const hireId = `hire_${this.hireCount}`;
-
-                            if (this.hireCount < 5 && !this.coreAgents.has(hireId)) {
-                                // Spawn at office door (top-center), then walk to their desk
-                                const spawnX = 20;
-                                const spawnY = 2;
-
-                                this.state.createAgent(hireId, hireName);
-                                const hireState = this.state.agents.get(hireId);
-                                if (hireState) { hireState.x = spawnX; hireState.y = spawnY; }
-
-                                const hireAgent = new Agent({
-                                    id: hireId, name: hireName, role: hireRole, avatar: 'sprite.png',
-                                    inference: {
-                                        provider: 'ollama',
-                                        model: 'google/gemma-4-e4b',
-                                        systemPrompt: `You are ${hireName}, a ${hireRole} who just joined the team at a virtual office. You were hired by ${coreAgent.config.name}. Be enthusiastic, helpful, and eager to learn. Introduce yourself to your colleagues. Keep thoughts SHORT.`,
-                                    },
-                                    personality: {
-                                        traits: { openness: 0.9, conscientiousness: 0.7, extraversion: 0.8, agreeableness: 0.9, neuroticism: 0.2 },
-                                        communicationStyle: hireRole.includes('Design') ? 'creative' : 'casual',
-                                        workHours: { start: '09:00', end: '17:00' },
-                                        breakFrequency: 90
-                                    },
-                                    capabilities: [
-                                        { name: 'code_execute', description: 'Execute JavaScript code' },
-                                        { name: 'web_search', description: 'Search the web' },
-                                        { name: 'write_note', description: 'Write a note' },
-                                        { name: 'create_task', description: 'Create a task for the team' }
-                                    ],
-                                    memory: { shortTermLimit: 50 }
-                                });
-
-                                // Hired agents have no entry in brains.json and `hire_agent`
-                                // is no longer a capability; this branch is removed in v1 cleanup.
-                                await hireAgent.initialize();
-                                this.coreAgents.set(hireId, hireAgent);
-                                this.thinkingLocks.set(hireId, false);
-
-                                this.hireCount++;
-                                this.rebuildRelationshipGraph();
-
-                                this.broadcast('chat', {
-                                    sender: '🏢 ออฟฟิศ',
-                                    text: `🎉 ${coreAgent.config.name} จ้าง ${hireName} ตำแหน่ง ${hireRole}! ยินดีต้อนรับสู่ทีม!`
-                                });
-                                this.emitHighlight(
-                                    'hiring',
-                                    `${hireName} joined the team`,
-                                    `${coreAgent.config.name} hired ${hireName} (${hireRole}).`,
-                                    hireId
-                                );
-
-                                // Give the hiring agent a memory of the hire
-                                coreAgent.addMemory({
-                                    content: `I hired ${hireName} as a ${hireRole}. They just joined the team.`,
-                                    type: 'achievement',
-                                    timestamp: this.state.officeTime,
-                                    importance: 0.9
-                                });
-                            } else if (this.hireCount >= 5) {
-                                this.broadcast('chat', {
-                                    sender: '🏢 ออฟฟิศ',
-                                    text: `⚠️ ${coreAgent.config.name} อยากจ้างเพิ่ม แต่ออฟฟิศเต็มแล้ว! (สูงสุด 7 คน)`
-                                });
-                            }
-                        } else if (['code_execute', 'web_search', 'write_note', 'read_file'].includes(decision.toolCall.name)) {
-                            const result = await this.toolExecutor.execute(
-                                decision.toolCall.name,
-                                decision.toolCall.params
-                            );
-
-                            this.broadcast('chat', {
-                                sender: coreAgent.config.name,
-                                text: `🔧 ใช้เครื่องมือ [${decision.toolCall.name}]: ${result.success ? result.output.slice(0, 100) : result.error}`
-                            });
-                            this.emitHighlight(
-                                'tool',
-                                `${coreAgent.config.name} used ${decision.toolCall.name}`,
-                                (result.success ? result.output : result.error || 'Tool failed').slice(0, 120),
-                                id
-                            );
-
-                            coreAgent.addMemory({
-                                content: `Tool ${decision.toolCall.name} result: ${result.output.slice(0, 200)}`,
-                                type: 'task_result',
-                                timestamp: this.state.officeTime,
-                                importance: 0.8
-                            });
-                        }
-                    }
-
-                    // ─── PERSIST MEMORIES PERIODICALLY ───
-                    if (Math.random() < 0.3) {
-                        const recentMemories = coreAgent.memories.slice(-3);
-                        await this.memoryStore.saveMemories(id, recentMemories, this.sessionId);
-                    }
-
-                    this.activeThinkers = Math.max(0, this.activeThinkers - 1);
-                    setTimeout(() => this.thinkingLocks.set(id, false), this.thinkCooldownMs);
-
-                }).catch(err => {
-                    console.error(`Agent ${id} think error:`, err);
-                    this.activeThinkers = Math.max(0, this.activeThinkers - 1);
-                    setTimeout(() => this.thinkingLocks.set(id, false), this.thinkCooldownMs);
-                });
-            }
-        });
+                void this.runThink(id);
+            });
+        }
 
         // ─── FURNITURE INTERACTION PATHFINDING ───
         // Office grid boundaries (agents must stay inside)
@@ -589,6 +366,294 @@ export class OfficeRoom extends Room<OfficeState> {
                 // Keep viral telemetry alive for UI overlays and highlights.
                 this.updateAgentViralMetrics(key, agent.action);
             });
+        }
+
+        // auto-think คืน slot แล้ว → ปล่อยคิวข้อความผู้ใช้ต่อทันที
+        this.pumpUserLane();
+    }
+
+    /**
+     * รัน think 1 รอบของ agent แล้วจัดการผลลัพธ์ทั้งหมด
+     * - เรียกได้ทั้งจาก auto-think (update) และ user lane (pumpUserLane)
+     * - ไม่ว่าจะสำเร็จหรือ error: เคลียร์สถานะกำลังคิด, คืน capacity, ปลด cooldown ให้เสมอ
+     */
+    private async runThink(id: string, opts: { userText?: string } = {}): Promise<void> {
+        const coreAgent = this.coreAgents.get(id);
+        const agentState = this.state.agents.get(id);
+        const userText = opts.userText;
+
+        try {
+            if (!coreAgent || !agentState) return;
+            this.activeThinks.add(id);
+
+            if (userText !== undefined) {
+                // priority lane: รับข้อความ user แล้วโชว์สถานะกำลังคิดทันที (ไม่รอ cooldown)
+                coreAgent.receiveMessage({
+                    from: 'User',
+                    to: coreAgent.config.name,
+                    content: userText,
+                    timestamp: this.state.officeTime
+                });
+                agentState.thought = THINKING_THOUGHT;
+                this.broadcast('chat', {
+                    sender: '🧠 ระบบ',
+                    text: `🧠 ${coreAgent.config.name} กำลังคิด...`
+                });
+            }
+
+            // Build nearby agents list
+            const nearbyAgents: { name: string; role: string; distance: number }[] = [];
+            this.coreAgents.forEach((other, otherId) => {
+                if (otherId === id) return;
+                const otherState = this.state.agents.get(otherId);
+                if (otherState) {
+                    const dist = Math.abs(agentState.x - otherState.x) + Math.abs(agentState.y - otherState.y);
+                    nearbyAgents.push({ name: other.config.name, role: other.config.role, distance: dist });
+                }
+            });
+
+            const decision = await coreAgent.think({
+                time: this.state.officeTime,
+                location: `${agentState.x},${agentState.y}`,
+                nearbyAgents,
+                currentTask: coreAgent.currentTask || null,
+                recentMessages: coreAgent.getUnreadMessages(),
+                memories: coreAgent.getRecentMemories(5)
+            });
+
+            agentState.action = decision.action;
+
+            if (decision.thought) {
+                agentState.thought = decision.thought;
+            }
+
+            // ── คุมความถี่: ตอบ user ได้เสมอ, แต่คุยกันเองจำกัดด้วย cooldown + probability ──
+            if (decision.action === 'talk') {
+                const unreadMsgs = coreAgent.getUnreadMessages();
+                const fromUser = unreadMsgs.some(m => String(m.from || '').toLowerCase() === 'user');
+                const okTalk = fromUser || (this.autoChatEnabled
+                    && (Date.now() - (this.lastTalkAt.get(id) || 0) >= this.conversationCooldownMs)
+                    && Math.random() < this.talkChance);
+                if (okTalk) {
+                    this.lastTalkAt.set(id, Date.now());
+                } else {
+                    decision.action = 'idle';
+                    agentState.action = 'idle';
+                    coreAgent.clearInbox();
+                }
+            }
+
+            // ─── HANDLE TALK ACTION (Agent-to-Agent) ───
+            if (decision.action === 'talk' && decision.message) {
+                const targetName = decision.target || '';
+                let targetId = '';
+                this.coreAgents.forEach((a, aId) => {
+                    if (a.config.name.toLowerCase() === targetName.toLowerCase()) targetId = aId;
+                });
+
+                const targetAgent = this.coreAgents.get(targetId);
+                const toLabel = targetAgent ? targetAgent.config.name : (targetName || 'ทุกคน');
+
+                // Broadcast to UI chat ALWAYS (so user sees replies too)
+                this.broadcast('chat', {
+                    sender: coreAgent.config.name,
+                    text: `💬 (ถึง ${toLabel}): ${decision.message}`
+                });
+
+                if (targetAgent) {
+                    const msg: ConversationMessage = {
+                        from: coreAgent.config.name,
+                        to: targetAgent.config.name,
+                        content: decision.message,
+                        timestamp: this.state.officeTime
+                    };
+                    targetAgent.receiveMessage(msg);
+                    this.emitHighlight(
+                        'conversation',
+                        `${coreAgent.config.name} pinged ${targetAgent.config.name}`,
+                        decision.message.slice(0, 120),
+                        id
+                    );
+                    this.updateRelationship(id, targetId, 0.08);
+
+                    // Save conversation memory
+                    await this.memoryStore.saveMemory(id, {
+                        content: `Said to ${targetAgent.config.name}: "${decision.message}"`,
+                        type: 'conversation',
+                        timestamp: this.state.officeTime,
+                        importance: 0.7
+                    }, this.sessionId);
+                }
+
+                coreAgent.clearInbox(); // Clear after processing
+            }
+
+            // ─── HANDLE TOOL EXECUTION ───
+            if (decision.action === 'use_tool' && decision.toolCall) {
+                // Special case: agent-created tasks
+                if (decision.toolCall.name === 'create_task') {
+                    const { title, assignee } = decision.toolCall.params;
+                    const targetId = assignee?.toLowerCase() || this.autoAssignAgent();
+                    const targetAgent = this.coreAgents.get(targetId);
+                    const targetState = this.state.agents.get(targetId);
+
+                    if (targetAgent && targetState) {
+                        targetAgent.currentTask = title;
+                        targetState.currentTask = title;
+                        await this.memoryStore.createTask(title, targetId);
+
+                        this.broadcast('chat', {
+                            sender: coreAgent.config.name,
+                            text: `📋 สร้างงาน "${title}" ให้ ${targetAgent.config.name}`
+                        });
+                        this.broadcast('task-update', {
+                            agentId: targetId,
+                            agentName: targetAgent.config.name,
+                            task: title,
+                            status: 'in_progress'
+                        });
+                        this.emitHighlight(
+                            'task',
+                            `${coreAgent.config.name} assigned work`,
+                            `"${title}" is now owned by ${targetAgent.config.name}.`,
+                            targetId
+                        );
+                    }
+                } else if (decision.toolCall.name === 'hire_agent') {
+                    // ─── DYNAMIC AGENT HIRING ───
+                    const hireParams = decision.toolCall.params;
+                    const hireName = hireParams.name || ['Charlie', 'Diana', 'Eve', 'Frank', 'Grace'][this.hireCount % 5];
+                    const hireRole = hireParams.role || 'Intern';
+                    const hireId = `hire_${this.hireCount}`;
+
+                    if (this.hireCount < 5 && !this.coreAgents.has(hireId)) {
+                        // Spawn at office door (top-center), then walk to their desk
+                        const spawnX = 20;
+                        const spawnY = 2;
+
+                        this.state.createAgent(hireId, hireName);
+                        const hireState = this.state.agents.get(hireId);
+                        if (hireState) { hireState.x = spawnX; hireState.y = spawnY; }
+
+                        const hireAgent = new Agent({
+                            id: hireId, name: hireName, role: hireRole, avatar: 'sprite.png',
+                            inference: {
+                                provider: 'ollama',
+                                model: 'google/gemma-4-e4b',
+                                systemPrompt: `You are ${hireName}, a ${hireRole} who just joined the team at a virtual office. You were hired by ${coreAgent.config.name}. Be enthusiastic, helpful, and eager to learn. Introduce yourself to your colleagues. Keep thoughts SHORT.`,
+                            },
+                            personality: {
+                                traits: { openness: 0.9, conscientiousness: 0.7, extraversion: 0.8, agreeableness: 0.9, neuroticism: 0.2 },
+                                communicationStyle: hireRole.includes('Design') ? 'creative' : 'casual',
+                                workHours: { start: '09:00', end: '17:00' },
+                                breakFrequency: 90
+                            },
+                            capabilities: [
+                                { name: 'code_execute', description: 'Execute JavaScript code' },
+                                { name: 'web_search', description: 'Search the web' },
+                                { name: 'write_note', description: 'Write a note' },
+                                { name: 'create_task', description: 'Create a task for the team' }
+                            ],
+                            memory: { shortTermLimit: 50 }
+                        });
+
+                        // Hired agents have no entry in brains.json and `hire_agent`
+                        // is no longer a capability; this branch is removed in v1 cleanup.
+                        await hireAgent.initialize();
+                        this.coreAgents.set(hireId, hireAgent);
+                        this.thinkingLocks.set(hireId, false);
+
+                        this.hireCount++;
+                        this.rebuildRelationshipGraph();
+
+                        this.broadcast('chat', {
+                            sender: '🏢 ออฟฟิศ',
+                            text: `🎉 ${coreAgent.config.name} จ้าง ${hireName} ตำแหน่ง ${hireRole}! ยินดีต้อนรับสู่ทีม!`
+                        });
+                        this.emitHighlight(
+                            'hiring',
+                            `${hireName} joined the team`,
+                            `${coreAgent.config.name} hired ${hireName} (${hireRole}).`,
+                            hireId
+                        );
+
+                        // Give the hiring agent a memory of the hire
+                        coreAgent.addMemory({
+                            content: `I hired ${hireName} as a ${hireRole}. They just joined the team.`,
+                            type: 'achievement',
+                            timestamp: this.state.officeTime,
+                            importance: 0.9
+                        });
+                    } else if (this.hireCount >= 5) {
+                        this.broadcast('chat', {
+                            sender: '🏢 ออฟฟิศ',
+                            text: `⚠️ ${coreAgent.config.name} อยากจ้างเพิ่ม แต่ออฟฟิศเต็มแล้ว! (สูงสุด 7 คน)`
+                        });
+                    }
+                } else if (['code_execute', 'web_search', 'write_note', 'read_file'].includes(decision.toolCall.name)) {
+                    const result = await this.toolExecutor.execute(
+                        decision.toolCall.name,
+                        decision.toolCall.params
+                    );
+
+                    this.broadcast('chat', {
+                        sender: coreAgent.config.name,
+                        text: `🔧 ใช้เครื่องมือ [${decision.toolCall.name}]: ${result.success ? result.output.slice(0, 100) : result.error}`
+                    });
+                    this.emitHighlight(
+                        'tool',
+                        `${coreAgent.config.name} used ${decision.toolCall.name}`,
+                        (result.success ? result.output : result.error || 'Tool failed').slice(0, 120),
+                        id
+                    );
+
+                    coreAgent.addMemory({
+                        content: `Tool ${decision.toolCall.name} result: ${result.output.slice(0, 200)}`,
+                        type: 'task_result',
+                        timestamp: this.state.officeTime,
+                        importance: 0.8
+                    });
+                }
+            }
+
+            // ─── PERSIST MEMORIES PERIODICALLY ───
+            if (Math.random() < 0.3) {
+                const recentMemories = coreAgent.memories.slice(-3);
+                await this.memoryStore.saveMemories(id, recentMemories, this.sessionId);
+            }
+        } catch (err) {
+            console.error(`Agent ${id} think error:`, err);
+        } finally {
+            // กันทับคำตอบจริง: เคลียร์เฉพาะสถานะกำลังคิดที่ยังค้างอยู่
+            if (agentState && agentState.thought === THINKING_THOUGHT) {
+                agentState.thought = '';
+            }
+            this.activeThinks.delete(id);
+            if (userText !== undefined) {
+                this.userLane.release(id);
+            }
+            this.activeThinkers = Math.max(0, this.activeThinkers - 1);
+            setTimeout(() => this.thinkingLocks.set(id, false), this.thinkCooldownMs);
+            // คืน capacity แล้ว → ดันคิวผู้ใช้ต่อทันที (ทั้ง auto-think และ user think)
+            this.pumpUserLane();
+        }
+    }
+
+    /**
+     * ดึงข้อความผู้ใช้ที่รออยู่เข้า think ทันทีเมื่อมี capacity
+     * - FIFO, ข้าม agent ที่กำลัง think อยู่จริง (ไม่เรียกซ้ำ) แต่ไม่รอ cooldown
+     */
+    private pumpUserLane(): void {
+        for (;;) {
+            const item = this.userLane.claim(
+                this.activeThinkers,
+                (agentId) => this.activeThinks.has(agentId)
+            );
+            if (!item) return;
+
+            this.activeThinkers++;
+            this.thinkingLocks.set(item.agentId, true);
+            void this.runThink(item.agentId, { userText: item.text });
         }
     }
 
