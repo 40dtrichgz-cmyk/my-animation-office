@@ -1,21 +1,18 @@
 @echo off
-REM tunnel-watchdog.bat - auto-restart ngrok if it dies
+REM tunnel-watchdog.bat - auto-restart trycloudflare tunnel if it drops
 REM Usage: scripts\deploy\tunnel-watchdog.bat
-REM Runs in background, checks ngrok every 30s, restarts if dead.
-REM Stop: kill the cmd process or run: taskkill /f /im cmd.exe (careful!)
+REM Logs to %TEMP%\tunnel-watchdog.log
+REM Stop: Ctrl+C or close the window
 
 set LOG=%TEMP%\tunnel-watchdog.log
-set NGROK="C:\Users\Windows10\AppData\Local\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-set URL=https://esophagus-reenact-dainty.ngrok-free.dev
+set CF="C:\Program Files (x86)\cloudflared\cloudflared.exe"
+set SERVER=http://localhost:3000
 
 echo [%date% %time%] Watchdog started >> %LOG%
 
 :loop
-tasklist /FI "IMAGENAME eq ngrok.exe" 2>NUL | find /I "ngrok.exe" >NUL
-if errorlevel 1 (
-    echo [%date% %time%] ngrok not running, restarting... >> %LOG%
-    start /b "" %NGROK% http 3000 --url %URL% >> %LOG% 2>&1
-    timeout /t 10 /nobreak >nul
-)
-timeout /t 30 /nobreak >nul
+echo [%date% %time%] Starting cloudflared tunnel... >> %LOG%
+%CF% tunnel --url %SERVER% >> %LOG% 2>&1
+echo [%date% %time%] Tunnel exited (code %errorlevel%), restarting in 5s... >> %LOG%
+timeout /t 5 /nobreak >nul
 goto loop
