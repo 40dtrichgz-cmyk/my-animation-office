@@ -1,0 +1,2 @@
+@echo off
+"C:\Users\Windows10\AppData\Local\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe" http 3000 --url https://esophagus-reenact-dainty.ngrok-free.dev > "%TEMP%\ngrok-tunnel.log" 2>&1
