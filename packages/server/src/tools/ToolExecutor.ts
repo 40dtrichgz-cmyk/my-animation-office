@@ -21,15 +21,22 @@ export class ToolExecutor {
     }
 
     async execute(toolName: string, params: any): Promise<ToolResult> {
+        // Sandbox: block dangerous tools in v1
+        if (toolName === 'code_execute' || toolName === 'read_file') {
+            return { success: false, output: '', error: 'เครื่องมือนี้ถูกปิดใน v1 (sandbox — เปิดอีกทีใน v2)' };
+        }
+
         switch (toolName) {
             case 'code_execute':
-                return this.executeCode(params.code, params.language || 'javascript');
+                // Should not reach here, but just in case
+                return { success: false, output: '', error: 'เครื่องมือนี้ถูกปิดใน v1 (sandbox — เปิดอีกทีใน v2)' };
             case 'web_search':
                 return this.webSearch(params.query);
             case 'write_note':
                 return this.writeNote(params.content);
             case 'read_file':
-                return this.readFile(params.path);
+                // Should not reach here, but just in case
+                return { success: false, output: '', error: 'เครื่องมือนี้ถูกปิดใน v1 (sandbox — เปิดอีกทีใน v2)' };
             default:
                 return { success: false, output: '', error: `Unknown tool: ${toolName}` };
         }

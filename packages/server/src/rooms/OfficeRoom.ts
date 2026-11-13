@@ -74,7 +74,6 @@ export class OfficeRoom extends Room<OfficeState> {
     private lastTalkAt: Map<string, number> = new Map();
     // ──────────────────────────────────────────────────
     private brains!: BrainRegistry;
-    private hireCount = 0; // Counter for generating unique IDs
     private toolExecutor = new ToolExecutor();
     private memoryStore = new MemoryStore();
     private sessionId = `session_${Date.now()}`;
@@ -98,13 +97,7 @@ export class OfficeRoom extends Room<OfficeState> {
         'water-cooler': { x: 28, y: 27, type: 'appliance' },
         'bookshelf': { x: 32, y: 12, type: 'furniture' },
         'beanbag': { x: 28, y: 6, type: 'seating' },
-        // Extra desks for dynamically hired agents
-        'hire_0-desk': { x: 15, y: 18, type: 'desk' },
-        'hire_1-desk': { x: 15, y: 23, type: 'desk' },
-        'hire_2-desk': { x: 25, y: 18, type: 'desk' },
-        'hire_3-desk': { x: 25, y: 8, type: 'desk' },
-        'hire_4-desk': { x: 32, y: 18, type: 'desk' },
-    };
+        };
 
     static getActiveRoom(): OfficeRoom | null {
         return OfficeRoom.activeRoom;
@@ -519,78 +512,7 @@ export class OfficeRoom extends Room<OfficeState> {
                             targetId
                         );
                     }
-                } else if (decision.toolCall.name === 'hire_agent') {
-                    // ─── DYNAMIC AGENT HIRING ───
-                    const hireParams = decision.toolCall.params;
-                    const hireName = hireParams.name || ['Charlie', 'Diana', 'Eve', 'Frank', 'Grace'][this.hireCount % 5];
-                    const hireRole = hireParams.role || 'Intern';
-                    const hireId = `hire_${this.hireCount}`;
-
-                    if (this.hireCount < 5 && !this.coreAgents.has(hireId)) {
-                        // Spawn at office door (top-center), then walk to their desk
-                        const spawnX = 20;
-                        const spawnY = 2;
-
-                        this.state.createAgent(hireId, hireName);
-                        const hireState = this.state.agents.get(hireId);
-                        if (hireState) { hireState.x = spawnX; hireState.y = spawnY; }
-
-                        const hireAgent = new Agent({
-                            id: hireId, name: hireName, role: hireRole, avatar: 'sprite.png',
-                            inference: {
-                                provider: 'ollama',
-                                model: 'google/gemma-4-e4b',
-                                systemPrompt: `You are ${hireName}, a ${hireRole} who just joined the team at a virtual office. You were hired by ${coreAgent.config.name}. Be enthusiastic, helpful, and eager to learn. Introduce yourself to your colleagues. Keep thoughts SHORT.`,
-                            },
-                            personality: {
-                                traits: { openness: 0.9, conscientiousness: 0.7, extraversion: 0.8, agreeableness: 0.9, neuroticism: 0.2 },
-                                communicationStyle: hireRole.includes('Design') ? 'creative' : 'casual',
-                                workHours: { start: '09:00', end: '17:00' },
-                                breakFrequency: 90
-                            },
-                            capabilities: [
-                                { name: 'code_execute', description: 'Execute JavaScript code' },
-                                { name: 'web_search', description: 'Search the web' },
-                                { name: 'write_note', description: 'Write a note' },
-                                { name: 'create_task', description: 'Create a task for the team' }
-                            ],
-                            memory: { shortTermLimit: 50 }
-                        });
-
-                        // Hired agents have no entry in brains.json and `hire_agent`
-                        // is no longer a capability; this branch is removed in v1 cleanup.
-                        await hireAgent.initialize();
-                        this.coreAgents.set(hireId, hireAgent);
-                        this.thinkingLocks.set(hireId, false);
-
-                        this.hireCount++;
-                        this.rebuildRelationshipGraph();
-
-                        this.broadcast('chat', {
-                            sender: '🏢 ออฟฟิศ',
-                            text: `🎉 ${coreAgent.config.name} จ้าง ${hireName} ตำแหน่ง ${hireRole}! ยินดีต้อนรับสู่ทีม!`
-                        });
-                        this.emitHighlight(
-                            'hiring',
-                            `${hireName} joined the team`,
-                            `${coreAgent.config.name} hired ${hireName} (${hireRole}).`,
-                            hireId
-                        );
-
-                        // Give the hiring agent a memory of the hire
-                        coreAgent.addMemory({
-                            content: `I hired ${hireName} as a ${hireRole}. They just joined the team.`,
-                            type: 'achievement',
-                            timestamp: this.state.officeTime,
-                            importance: 0.9
-                        });
-                    } else if (this.hireCount >= 5) {
-                        this.broadcast('chat', {
-                            sender: '🏢 ออฟฟิศ',
-                            text: `⚠️ ${coreAgent.config.name} อยากจ้างเพิ่ม แต่ออฟฟิศเต็มแล้ว! (สูงสุด 7 คน)`
-                        });
-                    }
-                } else if (['code_execute', 'web_search', 'write_note', 'read_file'].includes(decision.toolCall.name)) {
+                } else if (['web_search', 'write_note'].includes(decision.toolCall.name)) {
                     const result = await this.toolExecutor.execute(
                         decision.toolCall.name,
                         decision.toolCall.params
