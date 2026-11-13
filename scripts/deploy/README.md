@@ -1,15 +1,22 @@
-# Deploy — AnimationOffice (เครื่องนี้ + Cloudflare Tunnel)
+# Deploy - AnimationOffice (this machine + Cloudflare Tunnel)
 
-## เริ่มใช้งาน
+## Start
 ```powershell
-powershell -File scripts/deploy/start.ps1
+powershell -File scripts/deploy/start.bat
 ```
-สคริปต์จะ build (ถ้ายังไม่ build), รัน server บน :3000, เปิด Cloudflare Tunnel, แล้วแสดง URL สาธารณะ (trycloudflare.com)
+Or manually:
+```powershell
+# terminal 1
+npm run start --workspace=@agent-office/server
+# terminal 2
+scripts/deploy/run-tunnel.bat
+```
+The tunnel URL is printed in the console and saved to %TEMP%\cf-tunnel.log
 
-## หยุด
-กด Ctrl+C ในหน้าต่างที่รัน start.ps1 — server + tunnel จะถูกปิดพร้อมกัน
+## Stop
+Kill the node (dist/index.js) and cloudflared processes, or close the windows.
 
-## หมายเหตุ
-- ต้องติดตั้ง cloudflared แล้ว (`winget install Cloudflare.cloudflared`)
-- สมองของ agent (claude / opencode) ต้อง login อยู่บนเครื่องนี้
-- URL ของ trycloudflare เปลี่ยนทุกครั้งที่รันใหม่ (ไม่คงที่)
+## Notes
+- cloudflared must be installed: winget install Cloudflare.cloudflared
+- Agent brains (claude/opencode) must be logged in on this machine
+- The trycloudflare URL changes every run (not persistent) - use a named tunnel for a fixed URL
