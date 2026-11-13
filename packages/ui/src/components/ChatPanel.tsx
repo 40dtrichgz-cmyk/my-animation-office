@@ -3,11 +3,20 @@ import { eventBus } from '../events';
 import { getColyseusRoom } from '../game/Game';
 import { FloatingPanel } from './FloatingPanel';
 
+const AGENTS = [
+    { id: 'director', name: '🎬 ผู้กำกับ' },
+    { id: 'modeler', name: '🧊 โมเดลเลอร์' },
+    { id: 'rigger', name: '🦴 ริกเกอร์' },
+    { id: 'animator', name: '🎞️ แอนิเมเตอร์' },
+    { id: 'texturer', name: '🎨 เท็กซ์เจอร์' },
+];
+
 export function ChatPanel() {
     const [messages, setMessages] = useState<{ sender: string, text: string }[]>([
         { sender: 'ระบบ', text: 'เริ่มต้นออฟฟิศเรียบร้อย' }
     ]);
     const [input, setInput] = useState('');
+    const [target, setTarget] = useState('director');
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -26,7 +35,7 @@ export function ChatPanel() {
         if (!input.trim()) return;
         const room = getColyseusRoom();
         if (room) {
-            room.send('chat', { text: input });
+            room.send('chat', { text: input, target });
             setInput('');
         } else {
             setMessages(prev => [...prev, { sender: 'ระบบ', text: 'ผิดพลาด: ส่งข้อความไม่ได้ ยังไม่ได้เชื่อมต่อ Colyseus' }]);
@@ -46,14 +55,29 @@ export function ChatPanel() {
                     ))}
                     <div ref={endRef} />
                 </div>
-                <input
-                    type="text"
-                    placeholder="พิมพ์ข้อความ..."
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && send()}
-                    style={{ width: '100%', padding: '10px', boxSizing: 'border-box', background: '#333', color: 'white', border: '1px solid #444', borderRadius: 4, outline: 'none' }}
-                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    <select
+                        value={target}
+                        onChange={(e) => setTarget(e.target.value)}
+                        style={{
+                            flex: 0, padding: '10px', boxSizing: 'border-box',
+                            background: '#333', color: 'white', border: '1px solid #444', borderRadius: 4, outline: 'none',
+                            fontSize: '12px'
+                        }}
+                    >
+                        {AGENTS.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        placeholder="พิมพ์ข้อความ..."
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && send()}
+                        style={{ flex: 1, padding: '10px', boxSizing: 'border-box', background: '#333', color: 'white', border: '1px solid #444', borderRadius: 4, outline: 'none' }}
+                    />
+                </div>
             </div>
         </FloatingPanel>
     );
