@@ -1,22 +1,32 @@
-# Deploy - AnimationOffice (this machine + Cloudflare Tunnel)
+# Deploy - AnimationOffice (this machine + ngrok tunnel)
 
-## Start
+## Start (with auto-restart watchdog - recommended)
 ```powershell
-powershell -File scripts/deploy/start.bat
-```
-Or manually:
-```powershell
-# terminal 1
+# terminal 1: start server
 npm run start --workspace=@agent-office/server
-# terminal 2
-scripts/deploy/run-tunnel.bat
+
+# terminal 2: start tunnel watchdog (auto-restarts if tunnel drops)
+scripts\deploy\tunnel-watchdog.bat
 ```
-The tunnel URL is printed in the console and saved to %TEMP%\cf-tunnel.log
+
+## Start (simple, one-shot)
+```powershell
+# terminal 1: start server
+npm run start --workspace=@agent-office/server
+
+# terminal 2: start tunnel
+scripts\deploy\run-ngrok.bat
+```
 
 ## Stop
-Kill the node (dist/index.js) and cloudflared processes, or close the windows.
+```powershell
+taskkill /f /im ngrok.exe
+```
 
 ## Notes
-- cloudflared must be installed: winget install Cloudflare.cloudflared
+- ngrok must be installed: winget install Ngrok.Ngrok
 - Agent brains (claude/opencode) must be logged in on this machine
-- The trycloudflare URL changes every run (not persistent) - use a named tunnel for a fixed URL
+- Static URL: https://esophagus-reenact-dainty.ngrok-free.dev (does not change)
+- Free tier has interstitial page ("Visit Site") on first visit
+- For no interstitial page: use Cloudflare named tunnel (requires domain + API token without IP restriction)
+- Watchdog checks ngrok every 30s and restarts if dead (logs to %TEMP%\tunnel-watchdog.log)
