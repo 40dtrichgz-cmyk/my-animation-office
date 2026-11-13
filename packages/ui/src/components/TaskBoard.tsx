@@ -89,11 +89,11 @@ export function TaskBoard() {
                         }}
                     >
                         <option value="auto">🤖 มอบอัตโนมัติ</option>
-                        <option value="director">👤 ผู้กำกับ</option>
-                        <option value="modeler">👾 โมเดลเลอร์</option>
-                        <option value="rigger">🦴 ริกเกอร์</option>
-                        <option value="animator">🎞️ แอนิเมเตอร์</option>
-                        <option value="texturer">🎨 เท็กซ์เจอร์</option>
+                        <option value="director">👑 CEO</option>
+                        <option value="modeler">📋 ผู้จัดการ</option>
+                        <option value="rigger">💰 CFO</option>
+                        <option value="animator">🎨 ฟรีแลนซ์</option>
+                        <option value="texturer">🧑‍💼 พนักงาน</option>
                     </select>
                     <button type="submit" style={{
                         padding: '6px 14px', borderRadius: 6, border: 'none',

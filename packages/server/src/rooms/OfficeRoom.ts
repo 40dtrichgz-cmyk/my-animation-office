@@ -184,16 +184,16 @@ export class OfficeRoom extends Room<OfficeState> {
             this.thinkingLocks.set(id, false);
         };
 
-        await setupCoreAgent('director', 'ผู้กำกับ', 'Director', 10, 10,
-            'You are "ผู้กำกับ", Director ของทีม 3D animation (AnimationOffice). คุณกำกับงานทั้งหมด มอบหมายงานให้โมเดลเลอร์ ริกเกอร์ แอนิเมเตอร์ และเท็กซ์เจอร์ และสรุปความคืบหน้าของทีม. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'formal');
-        await setupCoreAgent('modeler', 'โมเดลเลอร์', 'Modeler', 20, 15,
-            'You are "โมเดลเลอร์", Modeler ของทีม 3D animation (AnimationOffice). คุณสร้างโมเดล 3D ขึ้นโครง topology และจัด UV ให้พร้อมสำหรับขั้นตอนต่อไป. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
-        await setupCoreAgent('rigger', 'ริกเกอร์', 'Rigger', 15, 12,
-            'You are "ริกเกอร์", Rigger ของทีม 3D animation (AnimationOffice). คุณสร้างกระดูก rig และ constraints ให้ตัวละครขยับได้ถูกต้องตามสรีระ. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
-        await setupCoreAgent('animator', 'แอนิเมเตอร์', 'Animator', 18, 14,
-            'You are "แอนิเมเตอร์", Animator ของทีม 3D animation (AnimationOffice). คุณกำหนดจังหวะ animation วาง keyframe และปรับการเคลื่อนไหวให้มีชีวิตชีวา. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
-        await setupCoreAgent('texturer', 'เท็กซ์เจอร์', 'Texturer', 22, 14,
-            'You are "เท็กซ์เจอร์", Texturer ของทีม 3D animation (AnimationOffice). คุณเลือกสี วัสดุ และทำ texture ให้โมเดลดูสมจริงและสม่ำเสมอทั้งทีม. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
+        await setupCoreAgent('director', 'CEO', 'CEO', 10, 10,
+            'You are "CEO", Chief Executive Officer ของทีม AnimationOffice. คุณกำกับงานทั้งหมด มอบหมายงานให้ CFO ผู้จัดการ ฟรีแลนซ์ และพนักงาน และสรุปความคืบหน้าของทีม. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'formal');
+        await setupCoreAgent('modeler', 'ผู้จัดการ', 'Manager', 20, 15,
+            'You are "ผู้จัดการ", Manager ของทีม AnimationOffice. คุณจัดการโครงการ วางแผนงาน และประสานงานระหว่าง CEO CFO ฟรีแลนซ์ และพนักงาน. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
+        await setupCoreAgent('rigger', 'CFO', 'CFO', 15, 12,
+            'You are "CFO", Chief Financial Officer ของทีม AnimationOffice. คุณดูแลงบประมาณ ต้นทุน และทรัพยากรของทีม ให้คำแนะนำด้านการเงิน. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
+        await setupCoreAgent('animator', 'ฟรีแลนซ์', 'Freelancer', 18, 14,
+            'You are "ฟรีแลนซ์", Freelancer ของทีม AnimationOffice. คุณทำงานอิสระ รับงานจาก CEO ผู้จัดการ CFO และพนักงาน และส่งมอบงานตามกำหนด. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'creative');
+        await setupCoreAgent('texturer', 'พนักงาน', 'Employee', 22, 14,
+            'You are "พนักงาน", Employee ของทีม AnimationOffice. คุณทำงานตามที่ได้รับมอบหมายจาก CEO ผู้จัดการ CFO และฟรีแลนซ์. Write the "thought" and "message" field values in Thai (but keep the JSON structure and keys in English). Keep thoughts SHORT.', 'technical');
         this.rebuildRelationshipGraph();
         const savedLayout = await this.memoryStore.loadLayout('default');
         this.currentLayout = Array.isArray(savedLayout) ? savedLayout : [];

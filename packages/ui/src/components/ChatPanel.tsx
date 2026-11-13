@@ -4,11 +4,11 @@ import { getColyseusRoom } from '../game/Game';
 import { FloatingPanel } from './FloatingPanel';
 
 const AGENTS = [
-    { id: 'director', name: '🎬 ผู้กำกับ' },
-    { id: 'modeler', name: '🧊 โมเดลเลอร์' },
-    { id: 'rigger', name: '🦴 ริกเกอร์' },
-    { id: 'animator', name: '🎞️ แอนิเมเตอร์' },
-    { id: 'texturer', name: '🎨 เท็กซ์เจอร์' },
+    { id: 'director', name: '👑 CEO' },
+    { id: 'modeler', name: '📋 ผู้จัดการ' },
+    { id: 'rigger', name: '💰 CFO' },
+    { id: 'animator', name: '🎨 ฟรีแลนซ์' },
+    { id: 'texturer', name: '🧑‍💼 พนักงาน' },
 ];
 
 export function ChatPanel() {
