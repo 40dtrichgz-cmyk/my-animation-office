@@ -77,6 +77,15 @@ export function ChatPanel() {
                         onKeyDown={(e) => e.key === 'Enter' && send()}
                         style={{ flex: 1, padding: '10px', boxSizing: 'border-box', background: '#333', color: 'white', border: '1px solid #444', borderRadius: 4, outline: 'none' }}
                     />
+                    <button
+                        onClick={send}
+                        style={{
+                            padding: '10px 14px', boxSizing: 'border-box', background: '#6c5ce7', color: 'white',
+                            border: '1px solid #444', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'
+                        }}
+                    >
+                        ส่ง
+                    </button>
                 </div>
             </div>
         </FloatingPanel>
