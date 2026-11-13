@@ -89,11 +89,11 @@ export function TaskBoard() {
                         }}
                     >
                         <option value="auto">🤖 มอบอัตโนมัติ</option>
-                        <option value="general">ทั่วไป</option>
-                        <option value="freelance">ฟรีแลนซ์</option>
-                        <option value="dev">นักพัฒนา</option>
-                        <option value="farmconnect">ฟาร์มคอนเนกต์</option>
-                        <option value="devdonate">เดฟโดเนต</option>
+                        <option value="director">👤 ผู้กำกับ</option>
+                        <option value="modeler">👾 โมเดลเลอร์</option>
+                        <option value="rigger">🦴 ริกเกอร์</option>
+                        <option value="animator">🎞️ แอนิเมเตอร์</option>
+                        <option value="texturer">🎨 เท็กซ์เจอร์</option>
                     </select>
                     <button type="submit" style={{
                         padding: '6px 14px', borderRadius: 6, border: 'none',

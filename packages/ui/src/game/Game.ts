@@ -279,11 +279,11 @@ export class OfficeScene extends Phaser.Scene {
                 this.add.text(x + 28, y - 6, label, { fontSize: '8px', color: '#a0a0c0', fontFamily: 'Tahoma, "Segoe UI", sans-serif' }).setOrigin(0.5);
             };
 
-            drawWorkstation(64, 154, '💻 ทั่วไป', true);
-            drawWorkstation(64, 234, '💻 ฟรีแลนซ์', true);
-            drawWorkstation(64, 314, '💻 นักพัฒนา', true);
-            drawWorkstation(64, 394, '💻 ฟาร์มคอนเนกต์', true);
-            drawWorkstation(64, 474, '💻 เดฟโดเนต', true);
+            drawWorkstation(64, 154, '👤 ผู้กำกับ', true);
+            drawWorkstation(64, 234, '👾 โมเดลเลอร์', true);
+            drawWorkstation(64, 314, '🦴 ริกเกอร์', true);
+            drawWorkstation(64, 394, '🎞️ แอนิเมเตอร์', true);
+            drawWorkstation(64, 474, '🎨 เท็กซ์เจอร์', true);
 
             // ═══════════════════════════════════════════
             //  COFFEE & PANTRY AREA
