@@ -1,3 +1,4 @@
+import * as path from 'path';
 import express from 'express';
 import { Server } from 'colyseus';
 import { createServer } from 'http';
@@ -30,6 +31,14 @@ app.get('/api/episode-recap', (req, res) => {
         return;
     }
     res.json({ ok: true, recap: room.getEpisodeRecap() });
+});
+
+// Serve built UI (same origin → no CORS) — needed for dev E2E and deploy
+const uiDist = path.join(__dirname, '..', '..', 'ui', 'dist');
+app.use(express.static(uiDist));
+app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/matchmake')) return next();
+    res.sendFile(path.join(uiDist, 'index.html'), (err) => { if (err) next(); });
 });
 
 // Create HTTP and Colyseus server
