@@ -6,7 +6,6 @@ import { eventBus } from '../events';
 let activeRoom: Colyseus.Room<OfficeState> | undefined;
 
 export function getColyseusRoom() {
-    if (typeof window !== 'undefined') (window as any).__colyseusRoom = activeRoom;
     return activeRoom;
 }
 

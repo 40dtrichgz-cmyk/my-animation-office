@@ -213,6 +213,18 @@ export class OfficeRoom extends Room<OfficeState> {
                 : (this.coreAgents.keys().next().value as string | undefined); // default = director (คนแรกที่ setup)
             if (!targetId) return; // ยังไม่มี agent ในห้อง
             this.broadcast('chat', { sender: 'User', text: `ถึง ${this.state.agents.get(targetId)?.name}: ${text}` });
+            // แสดงสถานะกำลังคิดทันที (ไม่รอ slot ว่าง) เพื่อให้ผู้ใช้เห็น feedback
+            const coreAgent = this.coreAgents.get(targetId);
+            if (coreAgent) {
+                const agentState = this.state.agents.get(targetId);
+                if (agentState) {
+                    agentState.thought = THINKING_THOUGHT;
+                }
+                this.broadcast('chat', {
+                    sender: '🧠 ระบบ',
+                    text: `🧠 ${coreAgent.config.name} กำลังคิด...`
+                });
+            }
             this.userLane.push({ agentId: targetId, text });
             this.pumpUserLane();
         });
@@ -388,10 +400,7 @@ export class OfficeRoom extends Room<OfficeState> {
                     timestamp: this.state.officeTime
                 });
                 agentState.thought = THINKING_THOUGHT;
-                this.broadcast('chat', {
-                    sender: '🧠 ระบบ',
-                    text: `🧠 ${coreAgent.config.name} กำลังคิด...`
-                });
+                // (thinking status already broadcast in chat handler for immediate feedback)
             }
 
             // Build nearby agents list
