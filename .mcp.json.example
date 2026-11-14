@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-gmail"],
+      "env": {
+        "GMAIL_CREDENTIALS": "${GMAIL_CREDENTIALS_PATH}"
+      }
+    },
+    "google-sheets": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-google-sheets"],
+      "env": {
+        "GOOGLE_SHEETS_CREDENTIALS": "${GOOGLE_SHEETS_CREDENTIALS_PATH}"
+      }
+    },
+    "telegram": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-telegram"],
+      "env": {
+        "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN}"
+      }
+    },
+    "make": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-make"],
+      "env": {
+        "MAKE_API_KEY": "${MAKE_API_KEY}"
+      }
+    }
+  }
+}
