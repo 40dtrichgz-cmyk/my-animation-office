@@ -61,7 +61,7 @@ export class OfficeRoom extends Room<OfficeState> {
     private thinkingLocks: Map<string, boolean> = new Map();
     private activeThinks: Set<string> = new Set(); // agent ที่กำลัง think อยู่จริง (กัน user lane เรียกซ้ำ)
     private activeThinkers = 0;
-    private maxConcurrentThinks = 3; // 2 auto-think + 1 user message slot
+    private maxConcurrentThinks = 5; // 5 concurrent: 3 auto-think + 2 user message slots
     // คิวข้อความผู้ใช้: แซง auto-think เสมอ (ไม่รอ cooldown, แต่ไม่เรียก agent ที่กำลังคิดซ้ำ)
     private userLane = new UserLane<{ agentId: string; text: string }>(this.maxConcurrentThinks);
     // ───────── จูนจังหวะ agent (ปรับค่าตรงนี้ได้เลย) ─────────

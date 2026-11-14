@@ -6,6 +6,7 @@ import { eventBus } from '../events';
 let activeRoom: Colyseus.Room<OfficeState> | undefined;
 
 export function getColyseusRoom() {
+    if (typeof window !== 'undefined') (window as any).__colyseusRoom = activeRoom;
     return activeRoom;
 }
 
@@ -523,6 +524,7 @@ export class OfficeScene extends Phaser.Scene {
 
                 // Bind chat bus
                 this.room!.onMessage('chat', (message: any) => {
+                    console.log('[DEBUG UI] chat received:', message);
                     eventBus.dispatchEvent(new CustomEvent('chat-message', { detail: message }));
                 });
                 this.room!.onMessage('highlight-event', (message: any) => {
